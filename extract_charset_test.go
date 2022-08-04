@@ -37,8 +37,7 @@ const (
 )
 
 // TestExtractCharacterSet creates a Go file for embedding into GMS. It contains the data necessary to encode and decode
-// the target character set. The prerequisite structs (such as RangeMap) should already be in GMS, so simply find the
-// relevant directory and fix the issues listed in the comment (package name and variable name).
+// the target character set. The prerequisite structs (such as RangeMap) should already be in GMS.
 func TestExtractCharacterSet(t *testing.T) {
 	iter := utils.NewUTF8Iter()
 	charsetToGoString := utils.NewCharacterSetEncodingTree()
@@ -116,7 +115,7 @@ func TestExtractCharacterSet(t *testing.T) {
 	file, err := os.OpenFile(TestExtractCharacterSet_file, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
 	defer file.Close()
-	_, err = file.WriteString(utils.RangeMapToGoFile(rangeMap, toUpper, toLower))
+	_, err = file.WriteString(utils.RangeMapToGoFile(rangeMap, toUpper, toLower, TestExtractCharacterSet_charset))
 	require.NoError(t, err)
 	err = file.Sync()
 	require.NoError(t, err)

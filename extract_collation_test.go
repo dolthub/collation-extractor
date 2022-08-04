@@ -37,8 +37,7 @@ const (
 )
 
 // TestExtractCollation creates a Go file for embedding into GMS. It contains the data necessary to sort and compare
-// strings based on the specified collation. Generic names are used for the generated package, function, and variable,
-// and must be renamed.
+// strings based on the specified collation. May take up to 120 minutes depending on the complexity of the collation.
 func TestExtractCollation(t *testing.T) {
 	// All collations start with the character set followed by an underscore
 	charset := strings.Split(TestExtractCollation_collation, "_")[0]
@@ -77,6 +76,13 @@ func TestExtractCollation(t *testing.T) {
 		case "-1":
 			return -1
 		case "0":
+			// If they're comparably equivalent and one has a weight, we can assign the other the same weight to
+			// potentially save time on future comparisons
+			if lOk && !rOk {
+				runeToWeight[r] = lWeight
+			} else if !lOk && rOk {
+				runeToWeight[l] = rWeight
+			}
 			return 0
 		default:
 			t.Fatalf("unknown output `%s` for comparing '%s' (%d) and '%s' (%d)", string(sqlOutput), string(l), l, string(r), r)
@@ -109,7 +115,7 @@ func TestExtractCollation(t *testing.T) {
 	file, err := os.OpenFile(TestExtractCollation_file, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
 	defer file.Close()
-	_, err = file.WriteString(utils.RuneComparatorToGoFile(runeComparator))
+	_, err = file.WriteString(utils.RuneComparatorToGoFile(runeComparator, TestExtractCollation_collation))
 	require.NoError(t, err)
 	err = file.Sync()
 	require.NoError(t, err)

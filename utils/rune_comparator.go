@@ -33,7 +33,7 @@ type RuneComparator struct {
 
 // NewRuneComparator returns a new RuneComparator.
 func NewRuneComparator() *RuneComparator {
-	return &RuneComparator{}
+	return &RuneComparator{make([][]rune, 0, 1200000), nil}
 }
 
 // Insert adds the given rune, calling the comparator to determine where to place it. SetComparator must be called
@@ -77,12 +77,20 @@ func (rc *RuneComparator) SetComparator(comparator func(l rune, r rune) int) {
 }
 
 // RuneComparatorToGoFile returns the given RuneComparator as a Go file for inclusion in an application.
-func RuneComparatorToGoFile(rc *RuneComparator) string {
+func RuneComparatorToGoFile(rc *RuneComparator, name string) string {
 	// This struct is used only in this function, so we can avoid polluting the package
 	type WeightRange struct {
 		Weight int
 		Lower  rune
 		Upper  rune
+	}
+
+	titleName := name
+	lowerName := strings.ToLower(name)
+	{
+		nameRunes := []rune(lowerName)
+		nameRunes[0] = []rune(strings.ToUpper(string(nameRunes[0])))[0]
+		titleName = string(nameRunes)
 	}
 
 	fileSb := strings.Builder{}
@@ -100,16 +108,17 @@ func RuneComparatorToGoFile(rc *RuneComparator) string {
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nonexistentpackagename
+package encodings
 
-//TODO: Change the package name, rename this function, and add comment for documentation of the function
-func getRuneWeight(r rune) int32 {
-	weight, ok := outputWeights[r]
+// %s_RuneWeight returns the weight of a given rune based on its relational sort order from
+// the %s collation.
+func %s_RuneWeight(r rune) int32 {
+	weight, ok := %s_Weights[r]
 	if ok {
 		return weight
-	}`, time.Now().Year()))
+	}`, time.Now().Year(), titleName, "`"+lowerName+"`", titleName, lowerName))
 	mapSb := strings.Builder{}
-	mapSb.WriteString("var outputWeights = map[rune]int32{\n")
+	mapSb.WriteString(fmt.Sprintf("var %s_Weights = map[rune]int32{\n", lowerName))
 	for weight, row := range rc.values {
 		var rowWeightRanges []WeightRange
 		for _, r := range row {
@@ -153,8 +162,10 @@ func getRuneWeight(r rune) int32 {
 	}
 }
 
-//TODO: Rename this variable, and add comment for documentation of the variable
-%s`, mapSb.String()))
+// %s_Weights contain a map from rune to weight for the %s collation. The
+// map primarily contains mappings that have a random order. Mappings that fit into a sequential range (and are long
+// enough) are defined in the calling function to save space.
+%s`, lowerName, "`"+lowerName+"`", mapSb.String()))
 	return fileSb.String()
 }
 
@@ -167,11 +178,9 @@ func (rc *RuneComparator) insertNewRow(r rune, idx int) {
 		return
 	}
 
-	// To insert at the given index, we create a new array while copying the old data into the correct positions.
-	// This is highly inefficient, but we're aiming for correctness not efficiency.
-	newValues := make([][]rune, len(rc.values)+1)
-	copy(newValues, rc.values[:idx])
-	newValues[idx] = []rune{r}
-	copy(newValues[idx+1:], rc.values[idx:])
-	rc.values = newValues
+	// To insert at the given index, we shift the existing data up by 1, and then replace the existing row with the new
+	// row.
+	rc.values = append(rc.values, nil)
+	copy(rc.values[idx+1:], rc.values[idx:])
+	rc.values[idx] = []rune{r}
 }

@@ -86,7 +86,15 @@ func (rm *RangeMap) Encode(data []byte) ([]byte, bool) {
 }
 
 // RangeMapToGoFile returns the given RangeMap as a Go file for inclusion in an application.
-func RangeMapToGoFile(rm *RangeMap, toUpper [][2]rune, toLower [][2]rune) string {
+func RangeMapToGoFile(rm *RangeMap, toUpper [][2]rune, toLower [][2]rune, name string) string {
+	titleName := name
+	lowerName := strings.ToLower(name)
+	{
+		nameRunes := []rune(lowerName)
+		nameRunes[0] = []rune(strings.ToUpper(string(nameRunes[0])))[0]
+		titleName = string(nameRunes)
+	}
+
 	sb := strings.Builder{}
 	sb.WriteString(fmt.Sprintf(`// Copyright %d Dolthub, Inc.
 //
@@ -102,12 +110,12 @@ func RangeMapToGoFile(rm *RangeMap, toUpper [][2]rune, toLower [][2]rune) string
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nonexistentpackagename
+package encodings
 
-//TODO: Change the package name, rename this variable, and add comment for documentation of the variable
-var outputRangeMap = RangeMap{
+// %s represents the %s character set encoding.
+var %s Encoder = &RangeMap{
 	inputEntries: [][]rangeMapEntry{
-`, time.Now().Year()))
+`, time.Now().Year(), titleName, "`"+lowerName+"`", titleName))
 	for _, entryLength := range rm.inputEntries {
 		if len(entryLength) == 0 {
 			sb.WriteString("\t\tnil,\n")
