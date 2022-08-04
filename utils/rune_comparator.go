@@ -31,6 +31,20 @@ type RuneComparator struct {
 	comparator func(l rune, r rune) int
 }
 
+// staticWeightRange is a sequential range of runes that all have the same weight.
+type staticWeightRange struct {
+	Weight int
+	Lower  rune
+	Upper  rune
+}
+
+// dynamicWeightRange is a sequential range of runes that all have the same offset to generate their weight.
+type dynamicWeightRange struct {
+	Offset int
+	Lower  rune
+	Upper  rune
+}
+
 // NewRuneComparator returns a new RuneComparator.
 func NewRuneComparator() *RuneComparator {
 	return &RuneComparator{make([][]rune, 0, 1200000), nil}
@@ -78,13 +92,6 @@ func (rc *RuneComparator) SetComparator(comparator func(l rune, r rune) int) {
 
 // RuneComparatorToGoFile returns the given RuneComparator as a Go file for inclusion in an application.
 func RuneComparatorToGoFile(rc *RuneComparator, name string) string {
-	// This struct is used only in this function, so we can avoid polluting the package
-	type WeightRange struct {
-		Weight int
-		Lower  rune
-		Upper  rune
-	}
-
 	titleName := name
 	lowerName := strings.ToLower(name)
 	{
@@ -119,43 +126,89 @@ func %s_RuneWeight(r rune) int32 {
 	}`, time.Now().Year(), titleName, "`"+lowerName+"`", titleName, lowerName))
 	mapSb := strings.Builder{}
 	mapSb.WriteString(fmt.Sprintf("var %s_Weights = map[rune]int32{\n", lowerName))
-	for weight, row := range rc.values {
-		var rowWeightRanges []WeightRange
-		for _, r := range row {
-			if len(rowWeightRanges) == 0 {
-				rowWeightRanges = append(rowWeightRanges, WeightRange{
-					Weight: weight,
-					Lower:  r,
-					Upper:  r,
-				})
-				continue
-			}
-			if rowWeightRanges[len(rowWeightRanges)-1].Upper+1 == r {
-				rowWeightRanges[len(rowWeightRanges)-1].Upper = r
-				continue
-			} else {
-				rowWeightRanges = append(rowWeightRanges, WeightRange{
-					Weight: weight,
-					Lower:  r,
-					Upper:  r,
-				})
-				continue
-			}
-		}
 
-		// We either make map entries or a range entry for any given weight range
-		for _, rowWeightRange := range rowWeightRanges {
-			// Cutoff point that determines whether we do a range comparison or a map comparison. Decision is arbitrary.
-			if rowWeightRange.Upper-rowWeightRange.Lower >= 25 {
-				fileSb.WriteString(fmt.Sprintf(" else if r >= %d && r <= %d {\n\t\treturn %d\n\t}",
-					rowWeightRange.Lower, rowWeightRange.Upper, rowWeightRange.Weight))
+	// Calculate all of the static ranges, even if they contain a single rune
+	var staticWeightRanges []staticWeightRange
+	for weight, row := range rc.values {
+		for _, r := range row {
+			if len(staticWeightRanges) == 0 {
+				staticWeightRanges = append(staticWeightRanges, staticWeightRange{
+					Weight: weight,
+					Lower:  r,
+					Upper:  r,
+				})
+				continue
+			}
+			if staticWeightRanges[len(staticWeightRanges)-1].Upper+1 == r &&
+				staticWeightRanges[len(staticWeightRanges)-1].Weight == weight {
+				staticWeightRanges[len(staticWeightRanges)-1].Upper = r
+				continue
 			} else {
-				for i := rowWeightRange.Lower; i <= rowWeightRange.Upper; i++ {
-					mapSb.WriteString(fmt.Sprintf("\t%d: %d,\n", i, weight))
-				}
+				staticWeightRanges = append(staticWeightRanges, staticWeightRange{
+					Weight: weight,
+					Lower:  r,
+					Upper:  r,
+				})
+				continue
 			}
 		}
 	}
+
+	// Combine all sequential static ranges of a single rune into dynamic ranges with an offset
+	var dynamicWeightRanges []dynamicWeightRange
+	for lowerIdx := 0; lowerIdx < len(staticWeightRanges); lowerIdx++ {
+		static := staticWeightRanges[lowerIdx]
+		if static.Count() > 1 {
+			continue
+		}
+		dynamic := dynamicWeightRange{
+			Offset: static.LowerOffset(),
+			Lower:  static.Lower,
+			Upper:  static.Upper,
+		}
+		upperIdx := lowerIdx + 1
+		for ; upperIdx < len(staticWeightRanges); upperIdx++ {
+			static := staticWeightRanges[upperIdx]
+			if dynamic.IsNext(static) {
+				dynamic.Upper = static.Lower
+			} else {
+				break
+			}
+		}
+		// Cutoff point that determines whether we make this a range comparison. Decision is arbitrary.
+		if dynamic.Count() >= 100 {
+			dynamicWeightRanges = append(dynamicWeightRanges, dynamic)
+			copy(staticWeightRanges[lowerIdx:], staticWeightRanges[upperIdx:])
+			staticWeightRanges = staticWeightRanges[:len(staticWeightRanges)-(upperIdx-lowerIdx)]
+		} else {
+			lowerIdx = upperIdx - 1
+		}
+	}
+
+	// All offset entries are listed first as they should be accessed more frequently than the static range entries
+	for _, rowWeightRange := range dynamicWeightRanges {
+		sign := "+"
+		if rowWeightRange.Offset < 0 {
+			sign = "-"
+			rowWeightRange.Offset *= -1
+		}
+		fileSb.WriteString(fmt.Sprintf(" else if r >= %d && r <= %d {\n\t\treturn r%s%d\n\t}",
+			rowWeightRange.Lower, rowWeightRange.Upper, sign, rowWeightRange.Offset))
+	}
+
+	// We either make map entries or a range entry depending on the range size
+	for _, rowWeightRange := range staticWeightRanges {
+		// Cutoff point that determines whether we do a range comparison or a map comparison. Decision is arbitrary.
+		if rowWeightRange.Upper-rowWeightRange.Lower >= 100 {
+			fileSb.WriteString(fmt.Sprintf(" else if r >= %d && r <= %d {\n\t\treturn %d\n\t}",
+				rowWeightRange.Lower, rowWeightRange.Upper, rowWeightRange.Weight))
+		} else {
+			for i := rowWeightRange.Lower; i <= rowWeightRange.Upper; i++ {
+				mapSb.WriteString(fmt.Sprintf("\t%d: %d,\n", i, rowWeightRange.Weight))
+			}
+		}
+	}
+
 	mapSb.WriteString("}\n")
 	fileSb.WriteString(fmt.Sprintf(` else {
 		return 2147483647
@@ -183,4 +236,33 @@ func (rc *RuneComparator) insertNewRow(r rune, idx int) {
 	rc.values = append(rc.values, nil)
 	copy(rc.values[idx+1:], rc.values[idx:])
 	rc.values[idx] = []rune{r}
+}
+
+// Count returns the number of runes that are contained within this range.
+func (static staticWeightRange) Count() int32 {
+	return int32(static.Upper-static.Lower) + 1
+}
+
+// LowerOffset returns the offset to add to the Lower value to get the Weight.
+func (static staticWeightRange) LowerOffset() int {
+	return static.Weight - int(static.Lower)
+}
+
+// Count returns the number of runes that are contained within this range.
+func (dynamic dynamicWeightRange) Count() int32 {
+	return int32(dynamic.Upper-dynamic.Lower) + 1
+}
+
+// IsNext returns whether the given staticWeightRange may be added to the calling dynamicWeightRange.
+func (dynamic dynamicWeightRange) IsNext(static staticWeightRange) bool {
+	if static.Count() > 1 {
+		return false
+	}
+	if static.Lower != dynamic.Upper+1 {
+		return false
+	}
+	if static.LowerOffset() != dynamic.Offset {
+		return false
+	}
+	return true
 }
