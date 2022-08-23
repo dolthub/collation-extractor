@@ -46,6 +46,8 @@ func TestExtractCollation(t *testing.T) {
 	conn, err := utils.NewConnection(TestExtractCollation_user, TestExtractCollation_password, TestExtractCollation_host, TestExtractCollation_port)
 	require.NoError(t, err)
 	defer conn.Close()
+	// The RangeMap allows us to check that a rune is valid in the character set, so that we may skip over invalid runes
+	rangeMap := CharacterSetToRangeMap(t, conn, charset)
 
 	// This is a map that takes a rune as an input and return the weight, which is represented as a byte slice. MySQL
 	// encodes weights as binary strings, and they cannot be converted to unsigned integers due to their length (which
@@ -91,6 +93,12 @@ func TestExtractCollation(t *testing.T) {
 	})
 
 	for r, ok := iter.Next(); ok; r, ok = iter.Next() {
+		// Ensure that this rune is a valid character in the character set, as we only want to process valid runes
+		_, ok := rangeMap.Encode([]byte(string(r)))
+		if !ok {
+			continue
+		}
+
 		// Converting a rune to a string will encode the rune (which is an int32) as a sequence of valid UTF8 bytes.
 		// We then convert it to a byte slice to pass to the hex encoder.
 		rAsBytes := []byte(string(r))
